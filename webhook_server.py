@@ -1,22 +1,24 @@
 import os
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
-from llama_index import StorageContext, load_index_from_storage
-from llama_index.llms import OpenAI
-from llama_index.embeddings import OpenAIEmbedding
-from llama_index import ServiceContext
 import uvicorn
 
+from llama_index.core import load_index_from_storage, ServiceContext
+from llama_index.core.storage.storage_context import StorageContext
+from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.openai import OpenAIEmbedding
+
 # ==== Настройки ====
-os.environ["OPENAI_API_KEY"] = ""
+os.environ["OPENAI_API_KEY"] = "вставь_сюда_твой_openai_api_key"
 
 # ==== FastAPI init ====
 app = FastAPI()
 
-# ==== Загрузка индекса один раз при старте ====
-print("🧠 Загружаем индекс...")
+# ==== Загружаем индекс ====
+print("🧠 Загружаем индекс из ./storage...")
 storage_context = StorageContext.from_defaults(persist_dir="./storage")
 index = load_index_from_storage(storage_context)
+
 service_context = ServiceContext.from_defaults(
     llm=OpenAI(temperature=0),
     embed_model=OpenAIEmbedding()
@@ -39,3 +41,4 @@ async def ask(request: AskRequest):
 # ==== Запуск ====
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
