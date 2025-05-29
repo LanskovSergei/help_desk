@@ -1,14 +1,14 @@
 import os
 import requests
-from llama_index import VectorStoreIndex, Document
-from llama_index.llms import OpenAI
-from llama_index.embeddings import OpenAIEmbedding
-from llama_index import ServiceContext
+
+from llama_index.core import VectorStoreIndex, Document, StorageContext, Settings
+from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.openai import OpenAIEmbedding
 
 # === НАСТРОЙКИ ===
-OUTLINE_API_KEY = ""
-OUTLINE_API_URL = ""
-OPENAI_API_KEY = ""
+OUTLINE_API_KEY = "ol_api..."
+OUTLINE_API_URL = "https://...."
+OPENAI_API_KEY = "sk-proj-wsyP-..."
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
@@ -23,7 +23,7 @@ def fetch_outline_documents():
             json={"limit": 100, "offset": (page - 1) * 100}
         )
         if response.status_code != 200:
-            print("Ошибка при получении документов:", response.text)
+            print("❌ Ошибка при получении документов:", response.text)
             break
 
         data = response.json()
@@ -44,11 +44,10 @@ def fetch_outline_documents():
 
 # === СОЗДАНИЕ ИНДЕКСА ===
 def build_index(docs):
-    service_context = ServiceContext.from_defaults(
-        llm=OpenAI(temperature=0),
-        embed_model=OpenAIEmbedding()
-    )
-    index = VectorStoreIndex.from_documents(docs, service_context=service_context)
+    Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
+    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
+
+    index = VectorStoreIndex.from_documents(docs)
     index.storage_context.persist(persist_dir="./storage")
     return index
 
@@ -58,6 +57,10 @@ if __name__ == "__main__":
     documents = fetch_outline_documents()
     print(f"✅ Загружено документов: {len(documents)}")
 
-    print("⚙️ Строим индекс...")
-    build_index(documents)
-    print("✅ Индекс сохранён в ./storage")
+    if documents:
+        print("⚙️ Строим индекс...")
+        build_index(documents)
+        print("✅ Индекс сохранён в ./storage")
+    else:
+        print("❌ Нет документов для индексации.")
+
