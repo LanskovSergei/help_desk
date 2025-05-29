@@ -10,7 +10,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 # ==== Настройки ====
-os.environ["OPENAI_API_KEY"] = "вставь_сюда_твой_OPENAI_ключ"
+os.environ["OPENAI_API_KEY"] = "sk-..."  
 
 # ==== Загрузка индекса ====
 storage_context = StorageContext.from_defaults(persist_dir="./storage")
