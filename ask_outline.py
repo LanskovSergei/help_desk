@@ -12,7 +12,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 # === Настройки ===
-os.environ["OPENAI_API_KEY"] = "sk-..."  # <-- свой ключ сюда
+os.environ["OPENAI_API_KEY"] = "sk-..."
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
 
