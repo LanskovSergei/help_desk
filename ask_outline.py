@@ -10,44 +10,43 @@ from llama_index.core.storage.storage_context import StorageContext
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
-# ==== API Key and LLM Settings ====
+# ==== Config ====
 os.environ["OPENAI_API_KEY"] = "sk-proj-..."
+
+# List of allowed user IDs for testing
+ALLOWED_USER_IDS = {"123456789"}  # Add more if needed
 
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
 
-# ==== Load Knowledge Base Index ====
+# ==== Load Index ====
 storage_context = StorageContext.from_defaults(persist_dir="./storage")
 index = load_index_from_storage(storage_context)
 
-# ==== Initialize Query Engine ====
 query_engine = index.as_query_engine(similarity_top_k=3)
 
 # ==== FastAPI App ====
 app = FastAPI()
 
-# ==== Allowed test user(s) ====
-ALLOWED_USER_IDS = {"123456789"}  # Add more user_ids as needed
-
-# ==== Request and Response Models ====
+# ==== Request/Response Models ====
 class QuestionRequest(BaseModel):
     question: str
-    user_id: str
+    user_id: Optional[str] = None
 
 class AIResponse(BaseModel):
     answer: str
     article_url: Optional[str] = None
     has_answer: bool
 
-# ==== API Endpoint ====
+# ==== Main Endpoint ====
 @app.post("/ask", response_model=AIResponse)
 async def ask_ai(request: QuestionRequest):
-    # Log the incoming request
+    # Log request
     log_line = f"{datetime.now().isoformat()} | USER_ID: {request.user_id} | Q: {request.question}\n"
     with open("requests.log", "a") as f:
         f.write(log_line)
 
-    # Check if user is allowed to test
+    # Check access
     if request.user_id not in ALLOWED_USER_IDS:
         return AIResponse(
             answer="Access denied. You are not authorized to use this service.",
@@ -57,10 +56,14 @@ async def ask_ai(request: QuestionRequest):
 
     try:
         response = query_engine.query(request.question)
-        response_text = str(response).strip()
+        response_text = str(response).strip().lower()
 
-        # If no meaningful response
-        if not response_text or "no results" in response_text.lower() or "no information" in response_text.lower():
+        failure_phrases = [
+            "no information", "no relevant", "no results",
+            "не найдено", "не удалось найти", "нет информации", "в предоставленном контексте не"
+        ]
+
+        if any(phrase in response_text for phrase in failure_phrases):
             return AIResponse(
                 answer="Information not found. Would you like to talk to an operator?",
                 article_url=None,
@@ -73,20 +76,21 @@ async def ask_ai(request: QuestionRequest):
             article_url = None
 
         return AIResponse(
-            answer=response_text,
+            answer=str(response),
             article_url=article_url,
             has_answer=True
         )
 
     except Exception:
         return AIResponse(
-            answer="Information not found. Would you like to talk to an operator?",
+            answer="Information not found. Would you like to talk to an operator.",
             article_url=None,
             has_answer=False
         )
 
-# ==== Run the server ====
+# ==== Server Runner ====
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 
