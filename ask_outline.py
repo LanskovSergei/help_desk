@@ -11,7 +11,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 # ==== Настройки ====
-os.environ["OPENAI_API_KEY"] = "sk-proj-..
+os.environ["OPENAI_API_KEY"] = "sk-proj-..." 
 
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
@@ -48,14 +48,15 @@ async def ask_ai(request: QuestionRequest):
         response = query_engine.query(request.question)
         answer_text = str(response).strip()
 
-        # Определение URL
+        # Попробуем вытащить ссылку
         try:
             article_url = response.source_nodes[0].node.metadata.get("url")
         except Exception:
             article_url = None
 
-        # Определение, есть ли релевантный ответ
-        if not answer_text or "не дал результатов" in answer_text.lower() or len(answer_text) < 10:
+        # Проверка на отсутствие ответа
+        keywords = ["no information", "не дал результатов", "нет информации"]
+        if not answer_text or len(answer_text) < 20 or any(k in answer_text.lower() for k in keywords):
             return AIResponse(
                 answer="Информация не найдена. Хотите поговорить с оператором?",
                 article_url=None,
@@ -78,4 +79,5 @@ async def ask_ai(request: QuestionRequest):
 # ==== Запуск сервера ====
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
