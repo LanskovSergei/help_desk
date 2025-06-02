@@ -11,7 +11,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 # ==== Настройки ====
-os.environ["OPENAI_API_KEY"] = "sk-..."
+os.environ["OPENAI_API_KEY"] = "sk-"
 
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
@@ -46,26 +46,25 @@ async def ask_ai(request: QuestionRequest):
 
     try:
         response = query_engine.query(request.question)
-        response_text = str(response)
 
-        try:
-            source_node = response.source_nodes[0]
-            article_url = source_node.node.metadata.get("url")
-        except Exception:
-            article_url = None
+        # Проверяем наличие источников и осмысленного текста
+        has_sources = bool(response.source_nodes)
+        answer_text = str(response).strip()
 
-        # Анализируем, есть ли смысловой ответ
-        has_answer = not (
-            "не дал результатов" in response_text.lower() or
-            "информация не найдена" in response_text.lower() or
-            len(response_text.strip()) == 0
-        )
+        if has_sources and answer_text:
+            try:
+                article_url = response.source_nodes[0].node.metadata.get("url")
+            except Exception:
+                article_url = None
 
-        return AIResponse(
-            answer=response_text,
-            article_url=article_url,
-            has_answer=has_answer
-        )
+            return AIResponse(
+                answer=answer_text,
+                article_url=article_url,
+                has_answer=True
+            )
+        else:
+            raise ValueError("Нет подходящего источника")
+
     except Exception as e:
         return AIResponse(
             answer="Информация не найдена. Хотите поговорить с оператором?",
