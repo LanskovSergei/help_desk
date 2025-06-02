@@ -11,7 +11,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 # ==== Настройки ====
-os.environ["OPENAI_API_KEY"] = "sk-...." 
+os.environ["OPENAI_API_KEY"] = "sk-..."
 
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
@@ -46,6 +46,7 @@ async def ask_ai(request: QuestionRequest):
 
     try:
         response = query_engine.query(request.question)
+        response_text = str(response)
 
         try:
             source_node = response.source_nodes[0]
@@ -53,10 +54,17 @@ async def ask_ai(request: QuestionRequest):
         except Exception:
             article_url = None
 
+        # Анализируем, есть ли смысловой ответ
+        has_answer = not (
+            "не дал результатов" in response_text.lower() or
+            "информация не найдена" in response_text.lower() or
+            len(response_text.strip()) == 0
+        )
+
         return AIResponse(
-            answer=str(response),
+            answer=response_text,
             article_url=article_url,
-            has_answer=bool(str(response).strip())
+            has_answer=has_answer
         )
     except Exception as e:
         return AIResponse(
@@ -68,4 +76,5 @@ async def ask_ai(request: QuestionRequest):
 # ==== Запуск ====
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
