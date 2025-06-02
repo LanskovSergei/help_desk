@@ -11,7 +11,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 # ==== Настройки ====
-os.environ["OPENAI_API_KEY"] = "sk-proj-..." 
+os.environ["OPENAI_API_KEY"] = "sk-proj-..
 
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
@@ -36,9 +36,10 @@ class AIResponse(BaseModel):
     article_url: Optional[str] = None
     has_answer: bool
 
-# ==== Эндпоинт ====
+# ==== Обработка запроса ====
 @app.post("/ask", response_model=AIResponse)
 async def ask_ai(request: QuestionRequest):
+    # Логируем запрос
     log_line = f"{datetime.now().isoformat()} | USER_ID: {request.user_id} | Q: {request.question}\n"
     with open("requests.log", "a") as f:
         f.write(log_line)
@@ -47,14 +48,14 @@ async def ask_ai(request: QuestionRequest):
         response = query_engine.query(request.question)
         answer_text = str(response).strip()
 
-        # Проверка на пустой или сгенерированный ответ без ссылки
+        # Определение URL
         try:
-            source_node = response.source_nodes[0]
-            article_url = source_node.node.metadata.get("url")
+            article_url = response.source_nodes[0].node.metadata.get("url")
         except Exception:
             article_url = None
 
-        if not answer_text or not article_url:
+        # Определение, есть ли релевантный ответ
+        if not answer_text or "не дал результатов" in answer_text.lower() or len(answer_text) < 10:
             return AIResponse(
                 answer="Информация не найдена. Хотите поговорить с оператором?",
                 article_url=None,
@@ -66,6 +67,7 @@ async def ask_ai(request: QuestionRequest):
             article_url=article_url,
             has_answer=True
         )
+
     except Exception as e:
         return AIResponse(
             answer="Информация не найдена. Хотите поговорить с оператором?",
