@@ -11,8 +11,8 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 # ==== Config ====
-os.environ["OPENAI_API_KEY"] = "sk-proj-..."  # 🔐 Укажи свой ключ
-ALLOWED_USER_IDS = {"123456789"}  # 👤 Добавь сюда разрешённые user_id
+os.environ["OPENAI_API_KEY"] = "sk-proj-..."  # Замените на актуальный ключ
+ALLOWED_USER_IDS = {"123456789"}  # Разрешённые user_id
 
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
@@ -43,7 +43,7 @@ async def ask_ai(request: QuestionRequest):
     with open("requests.log", "a") as f:
         f.write(log_line)
 
-    # Access control
+    # Check user access
     if request.user_id not in ALLOWED_USER_IDS:
         return AIResponse(
             answer="Access denied. You are not authorized to use this service.",
@@ -54,7 +54,7 @@ async def ask_ai(request: QuestionRequest):
     try:
         response = query_engine.query(request.question)
 
-        # 🛡 Проверка: есть ли релевантные документы
+        # 🛡️ Чёткая проверка: есть ли хоть один релевантный источник
         if not response.source_nodes:
             return AIResponse(
                 answer="Information not found. Would you like to talk to an operator?",
@@ -62,13 +62,20 @@ async def ask_ai(request: QuestionRequest):
                 has_answer=False
             )
 
-        try:
-            article_url = response.source_nodes[0].node.metadata.get("url")
-        except Exception:
-            article_url = None
+        # Дополнительная проверка: источник действительно содержит текст
+        first_node = response.source_nodes[0]
+        answer_text = str(response).strip()
+        if not answer_text:
+            return AIResponse(
+                answer="Information not found. Would you like to talk to an operator?",
+                article_url=None,
+                has_answer=False
+            )
+
+        article_url = first_node.node.metadata.get("url")
 
         return AIResponse(
-            answer=str(response),
+            answer=answer_text,
             article_url=article_url,
             has_answer=True
         )
