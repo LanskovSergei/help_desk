@@ -11,12 +11,10 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 # ==== Config ====
-os.environ["OPENAI_API_KEY"] = "sk-proj-..." 
+os.environ["OPENAI_API_KEY"] = "sk-proj-..."  # <-- Замени на свой ключ
 
-# Разрешённые пользователи (для теста)
-ALLOWED_USER_IDS = {"123456789"}  
+ALLOWED_USER_IDS = {"123456789"}
 
-# Настройки модели и эмбеддинга
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
 
@@ -28,7 +26,6 @@ query_engine = index.as_query_engine(similarity_top_k=3)
 # ==== FastAPI App ====
 app = FastAPI()
 
-# ==== Модели ====
 class QuestionRequest(BaseModel):
     question: str
     user_id: Optional[str] = None
@@ -37,7 +34,7 @@ class AIResponse(BaseModel):
     answer: str
     article_url: Optional[str] = None
     has_answer: bool
-    user_id: Optional[str] = None  # добавили это поле
+    user_id: Optional[str] = None
 
 # ==== Основной эндпоинт ====
 @app.post("/ask", response_model=AIResponse)
@@ -56,18 +53,39 @@ async def ask_ai(request: QuestionRequest):
             user_id=request.user_id
         )
 
+    # Проверка на оффтоп (болтовню)
+    irrelevant_questions = [
+        "как дела", "что делаешь", "что нового", "привет", "доброе утро", "добрый день",
+        "добрый вечер", "здравствуй", "здравствуйте", "как ты", "как настроение",
+        "как поживаешь", "что слышно", "что у тебя нового", "чем занят", "как сам", "ну как ты",
+        "как день", "как утро", "как вечер", "шо как", "шо делаешь",
+
+        "hi", "hello", "hey", "what's up", "how are you", "how is it going",
+        "how are you doing", "how's everything", "how's it going", "what's going on",
+        "who are you", "tell me about yourself", "are you real", "what's your name"
+    ]
+
+    normalized_question = request.question.strip().lower()
+    if normalized_question in irrelevant_questions:
+        return AIResponse(
+            answer="Answer not found.",
+            article_url=None,
+            has_answer=False,
+            user_id=request.user_id
+        )
+
     try:
         response = query_engine.query(request.question)
         response_text = str(response).strip().lower()
 
         failure_phrases = [
-            "no information", "no relevant", "no results",
+            "no information", "no relevant", "no results", "i don't know",
             "не найдено", "не удалось найти", "нет информации", "в предоставленном контексте не"
         ]
 
-        if any(phrase in response_text for phrase in failure_phrases):
+        if not response_text or any(phrase in response_text for phrase in failure_phrases) or len(response_text) < 10:
             return AIResponse(
-                answer="Information not found. Would you like to talk to an operator?",
+                answer="Answer not found.",
                 article_url=None,
                 has_answer=False,
                 user_id=request.user_id
@@ -82,12 +100,12 @@ async def ask_ai(request: QuestionRequest):
             answer=str(response),
             article_url=article_url,
             has_answer=True,
-            user_id=request.user_id  # ← обязательно возвращаем
+            user_id=request.user_id
         )
 
     except Exception:
         return AIResponse(
-            answer="Information not found. Would you like to talk to an operator?",
+            answer="Answer not found.",
             article_url=None,
             has_answer=False,
             user_id=request.user_id
@@ -96,6 +114,7 @@ async def ask_ai(request: QuestionRequest):
 # ==== Запуск сервера ====
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 
 
