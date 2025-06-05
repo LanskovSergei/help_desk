@@ -1,19 +1,27 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from llama_index.core import load_index_from_storage, Settings
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
-# ==== Config ====
-os.environ["OPENAI_API_KEY"] = "sk-proj-..."  # <-- Замени на свой ключ
+from jose import jwt, JWTError
+from fastapi.responses import HTMLResponse
+import requests
 
-ALLOWED_USER_IDS = {"123456789"}
+# ==== Config ====
+os.environ["OPENAI_API_KEY"] = "sk-"
+
+ALLOWED_USER_IDS = {"118", "6260"}
+SECRET_KEY = "your-very-secret-key"  
+ALGORITHM = "HS256"
+OUTLINE_API_KEY = os.getenv("OUTLINE_API_KEY") or "your_outline_api_key"
+OUTLINE_API_URL = "https://your-outline.com/api/documents"  
 
 Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
 Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
@@ -36,6 +44,14 @@ class AIResponse(BaseModel):
     has_answer: bool
     user_id: Optional[str] = None
 
+def generate_article_token(article_id: str, user_id: str, expires_minutes: int = 15) -> str:
+    payload = {
+        "article_id": article_id,
+        "user_id": user_id,
+        "exp": datetime.utcnow() + timedelta(minutes=expires_minutes)
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
 # ==== Основной эндпоинт ====
 @app.post("/ask", response_model=AIResponse)
 async def ask_ai(request: QuestionRequest):
@@ -48,27 +64,6 @@ async def ask_ai(request: QuestionRequest):
     if request.user_id not in ALLOWED_USER_IDS:
         return AIResponse(
             answer="Access denied. You are not authorized to use this service.",
-            article_url=None,
-            has_answer=False,
-            user_id=request.user_id
-        )
-
-    # Проверка на оффтоп (болтовню)
-    irrelevant_questions = [
-        "как дела", "что делаешь", "что нового", "привет", "доброе утро", "добрый день",
-        "добрый вечер", "здравствуй", "здравствуйте", "как ты", "как настроение",
-        "как поживаешь", "что слышно", "что у тебя нового", "чем занят", "как сам", "ну как ты",
-        "как день", "как утро", "как вечер", "шо как", "шо делаешь",
-
-        "hi", "hello", "hey", "what's up", "how are you", "how is it going",
-        "how are you doing", "how's everything", "how's it going", "what's going on",
-        "who are you", "tell me about yourself", "are you real", "what's your name"
-    ]
-
-    normalized_question = request.question.strip().lower()
-    if normalized_question in irrelevant_questions:
-        return AIResponse(
-            answer="Answer not found.",
             article_url=None,
             has_answer=False,
             user_id=request.user_id
@@ -92,7 +87,12 @@ async def ask_ai(request: QuestionRequest):
             )
 
         try:
-            article_url = response.source_nodes[0].node.metadata.get("url")
+            raw_url = response.source_nodes[0].node.metadata.get("url")
+            article_id = raw_url.split("/")[-1] if raw_url else None
+            article_url = (
+                f"https://yourdomain.com/article/{article_id}?token={generate_article_token(article_id, request.user_id)}"
+                if article_id else None
+            )
         except Exception:
             article_url = None
 
@@ -111,9 +111,39 @@ async def ask_ai(request: QuestionRequest):
             user_id=request.user_id
         )
 
+# ==== Эндпоинт получения статьи по токену ====
+@app.get("/article/{article_id}")
+async def get_article(article_id: str, request: Request):
+    token = request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=403, detail="Token is required")
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("article_id") != article_id:
+            raise HTTPException(status_code=403, detail="Token mismatch")
+    except JWTError:
+        raise HTTPException(status_code=403, detail="Invalid or expired token")
+
+    response = requests.get(
+        f"{OUTLINE_API_URL}/{article_id}",
+        headers={"Authorization": f"Bearer {OUTLINE_API_KEY}"}
+    )
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    try:
+        text = response.json()["data"]["document"]["text"]
+    except Exception:
+        text = "<p>Article could not be parsed</p>"
+
+    return HTMLResponse(content=text)
+
 # ==== Запуск сервера ====
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 
 
