@@ -1,0 +1,152 @@
+import os
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime, timedelta
+from jose import jwt, JWTError
+
+from llama_index.core import load_index_from_storage, Settings
+from llama_index.core.storage.storage_context import StorageContext
+from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.openai import OpenAIEmbedding
+
+from fastapi.templating import Jinja2Templates
+
+# === Конфигурация ===
+os.environ["OPENAI_API_KEY"] = "sk-proj-..."
+SECRET_KEY = "twkenuadqxmhnpxl"
+ALGORITHM = "HS256"
+ALLOWED_USER_IDS = {"118", "6260"}
+
+# === LLM и Embeddings ===
+Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
+Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
+
+# === Индекс ===
+storage_context = StorageContext.from_defaults(persist_dir="./storage")
+index = load_index_from_storage(storage_context)
+query_engine = index.as_query_engine(similarity_top_k=3)
+
+# === Шаблоны ===
+templates = Jinja2Templates(directory="templates")
+
+# === FastAPI ===
+app = FastAPI()
+
+# === Модели ===
+class QuestionRequest(BaseModel):
+    question: str
+    user_id: Optional[str] = None
+
+class AIResponse(BaseModel):
+    answer: str
+    doc_url: Optional[str] = None
+    has_answer: bool
+    user_id: Optional[str] = None
+
+# === Генерация токена для защищённого doc ===
+def generate_token(article_data: dict, user_id: str, minutes: int = 15) -> str:
+    payload = {
+        "article_data": article_data,
+        "user_id": user_id,
+        "exp": datetime.utcnow() + timedelta(minutes=minutes),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+# === Основной эндпоинт ===
+@app.post("/ask", response_model=AIResponse)
+async def ask_ai(request: QuestionRequest):
+    if request.user_id not in ALLOWED_USER_IDS:
+        return AIResponse(
+            answer="Access denied.",
+            doc_url=None,
+            has_answer=False,
+            user_id=request.user_id
+        )
+
+    try:
+        response = query_engine.query(request.question)
+        response_text = str(response).strip()
+
+        if not response_text or len(response_text) < 10:
+            return AIResponse(
+                answer="Answer not found.",
+                doc_url=None,
+                has_answer=False,
+                user_id=request.user_id
+            )
+
+        node = response.source_nodes[0].node
+        article_data = {
+            "title": node.metadata.get("title", "Untitled"),
+            "text": node.text
+        }
+
+        token = generate_token(article_data, request.user_id)
+        doc_url = f"http://159.69.62.145:8000/doc?token={token}"
+
+        return AIResponse(
+            answer=response_text,
+            doc_url=doc_url,
+            has_answer=True,
+            user_id=request.user_id
+        )
+
+    except Exception as e:
+        return AIResponse(
+            answer="Internal error.",
+            doc_url=None,
+            has_answer=False,
+            user_id=request.user_id
+        )
+
+# === Защищённый просмотр статьи ===
+@app.get("/doc", response_class=HTMLResponse)
+async def get_doc(request: Request):
+    token = request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=403, detail="Token is required")
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        article_data = payload.get("article_data", {})
+        if not article_data:
+            raise HTTPException(status_code=403, detail="Invalid token data")
+    except JWTError:
+        raise HTTPException(status_code=403, detail="Invalid or expired token")
+
+    return templates.TemplateResponse("article.html", {
+        "request": request,
+        "title": article_data.get("title"),
+        "text": article_data.get("text")
+    })
+
+# === SSO-ссылка для входа через Bitrix ===
+@app.get("/generate-login-link")
+def generate_login_link(user_id: str, email: str):
+    if user_id not in ALLOWED_USER_IDS:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "exp": datetime.utcnow() + timedelta(minutes=5)
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return {"login_link": f"http://159.69.62.145:8000/auth?token={token}"}
+
+@app.get("/auth")
+def auth(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("email")
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid token payload")
+
+        return RedirectResponse(f"https://outline.taliaslimbot.com")
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
