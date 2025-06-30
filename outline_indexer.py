@@ -1,102 +1,91 @@
 import os
 import requests
-
-from llama_index.core import (
-    Document,
-    StorageContext,
-    VectorStoreIndex,
-    Settings,
-    load_index_from_storage
-)
-from llama_index.llms.openai import OpenAI
+from llama_index.core import VectorStoreIndex, Document, StorageContext, Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
 
-# === НАСТРОЙКИ ===
-OUTLINE_API_KEY = os.environ["OUTLINE_API_KEY"]
-OUTLINE_API_URL = os.environ["OUTLINE_API_URL"]
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+# ======= Настройки =======
+OUTLINE_API_URL = "https://outline.taliaslimbot.com/api"
+OUTLINE_API_KEY = "ol_"
+OPENAI_API_KEY = "sk-"
+
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+HEADERS = {"Authorization": f"Bearer {OUTLINE_API_KEY}"}
 
-Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
-Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
-
-
-# === ЗАГРУЗКА ДОКУМЕНТОВ ИЗ ВСЕХ КОЛЛЕКЦИЙ OUTLINE ===
-def fetch_outline_documents():
-    docs = []
-    headers = {
-        "Authorization": f"Bearer {OUTLINE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    # Получаем список коллекций
+# ======= Получение всех документов из всех коллекций =======
+def fetch_all_documents():
     print("📁 Получаем список коллекций...")
-    collections_resp = requests.post(
+    collections = requests.post(
         f"{OUTLINE_API_URL}/collections.list",
-        headers=headers
-    )
-
-    collections = collections_resp.json().get("data", [])
+        headers=HEADERS
+    ).json().get("data", [])
     print(f"✅ Найдено коллекций: {len(collections)}")
 
-    for col in collections:
-        collection_id = col["id"]
-        print(f"🔍 Обрабатываем коллекцию: {col['name']} ({collection_id})")
-        page = 1
-        while True:
-            response = requests.post(
-                f"{OUTLINE_API_URL}/documents.list",
-                headers=headers,
-                json={"collectionId": collection_id, "limit": 100, "offset": (page - 1) * 100}
-            )
-            if response.status_code != 200:
-                print("❌ Ошибка при получении документов:", response.text)
-                break
+    all_docs = []
 
-            results = response.json().get("data", [])
+    for col in collections:
+        col_id = col["id"]
+        col_name = col["name"]
+        print(f"🔍 Обрабатываем коллекцию: {col_name} ({col_id})")
+
+        page = 0
+        while True:
+            resp = requests.post(
+                f"{OUTLINE_API_URL}/documents.list",
+                headers=HEADERS,
+                json={"collectionId": col_id, "limit": 100, "offset": page * 100}
+            )
+            results = resp.json().get("data", [])
             if not results:
                 break
 
             for doc in results:
-                if doc.get("archived") or not doc.get("text"):
+                doc_id = doc["id"]
+                title = doc["title"]
+
+                export_resp = requests.post(
+                    f"{OUTLINE_API_URL}/documents.export",
+                    headers=HEADERS,
+                    json={"id": doc_id}
+                )
+                if export_resp.status_code != 200:
+                    print(f"❌ Ошибка при экспорте документа: {title}")
                     continue
-                docs.append(Document(
-                    text=doc["text"],
-                    metadata={"title": doc["title"], "url": doc.get("url", "")}
+
+                text = export_resp.json().get("data", "").strip()
+                if not text:
+                    print(f"⚠️ Документ пустой: {title}")
+                    continue
+
+                all_docs.append(Document(
+                    text=text,
+                    metadata={"title": title, "collection": col_name}
                 ))
 
             page += 1
 
-    return docs
+    print(f"📄 Загружено документов: {len(all_docs)}")
+    return all_docs
 
+# ======= Построение индекса =======
+def build_index(docs):
+    Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0)
+    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
+    index = VectorStoreIndex.from_documents(docs)
+    index.storage_context.persist(persist_dir="./storage")
+    return index
 
-# === СОЗДАНИЕ ИЛИ ОБНОВЛЕНИЕ ИНДЕКСА ===
-def build_or_update_index(docs):
-    persist_dir = "./storage"
-    try:
-        storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-        index = load_index_from_storage(storage_context)
-        print("📦 Существующий индекс загружен. Обновляем...")
-        index.insert_documents(docs)
-        index.storage_context.persist(persist_dir=persist_dir)
-    except Exception as e:
-        print("📦 Индекса нет. Создаём новый...")
-        index = VectorStoreIndex.from_documents(docs)
-        index.storage_context.persist(persist_dir=persist_dir)
-
-    print("✅ Индекс сохранён")
-
-
-# === ТОЧКА ВХОДА ===
+# ======= Точка входа =======
 if __name__ == "__main__":
     print("🔄 Загружаем документы из Outline...")
-    documents = fetch_outline_documents()
-    print(f"📄 Загружено документов: {len(documents)}")
+    documents = fetch_all_documents()
 
     if documents:
-        print("⚙️ Обновляем или создаём индекс...")
-        build_or_update_index(documents)
+        print("⚙️ Строим индекс...")
+        build_index(documents)
+        print("✅ Индекс сохранён в ./storage")
     else:
-        print("❌ Документы не найдены — индексация не выполнена.")
+        print("❌ Нет документов для индексации.")
+
 
 
